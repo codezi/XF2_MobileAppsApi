@@ -10,17 +10,14 @@ use function trim;
 use LogicException;
 use XF\Mvc\Controller;
 use function preg_match;
-use function json_decode;
 use function array_replace;
 use function base64_decode;
 use XF\Purchasable\Purchase;
 use XF\Entity\PaymentProfile;
 use XF\Payment\CallbackState;
-use function array_key_exists;
 use XF\Entity\PurchaseRequest;
 use XF\Payment\AbstractProvider;
 use Truonglv\Api\Entity\IAPProduct;
-use Google\Service\AndroidPublisher;
 use Truonglv\Api\Finder\IAPProductFinder;
 
 class Android extends AbstractProvider implements IAPInterface
@@ -69,7 +66,7 @@ class Android extends AbstractProvider implements IAPInterface
         }
 
         try {
-            \GuzzleHttp\json_decode($options['service_account_json']);
+            \GuzzleHttp\Utils::jsonDecode($options['service_account_json']);
         } catch (Throwable $e) {
             $errors[] = $e->getMessage();
 
@@ -97,7 +94,7 @@ class Android extends AbstractProvider implements IAPInterface
         $state = new CallbackState();
         $state->{static::KEY_INPUT_RAW} = $inputRaw;
 
-        $json = (array) json_decode($inputRaw, true);
+        $json = (array) \GuzzleHttp\Utils::jsonDecode($inputRaw, true);
         if (!isset($json['message'])) {
             $state->logType = 'error';
             $state->logMessage = 'Invalid payload. No `message`';
@@ -105,7 +102,7 @@ class Android extends AbstractProvider implements IAPInterface
             return $state;
         }
 
-        $data = (array) json_decode(base64_decode($json['message']['data'], true), true);
+        $data = (array) \GuzzleHttp\Utils::jsonDecode(base64_decode($json['message']['data'], true), true);
 
         $filtered = $request->getInputFilterer()->filterArray($data, [
             'version' => 'str',
@@ -141,12 +138,10 @@ class Android extends AbstractProvider implements IAPInterface
             return $state;
         }
 
-        $service = $this->getAndroidPublisher($product->PaymentProfile);
+        $service = $this->getGooglePlaySubscriptionHelper($product->PaymentProfile);
 
         try {
-            $purchase = $service->purchases_subscriptions->get(
-                $filtered['packageName'],
-                $filtered['subscriptionNotification']['subscriptionId'],
+            $purchase = $service->getSubscription(
                 $filtered['subscriptionNotification']['purchaseToken']
             );
         } catch (Throwable $e) {
@@ -169,9 +164,8 @@ class Android extends AbstractProvider implements IAPInterface
         $state->subscriberId = $transInfo['subscriber_id'];
         $state->transactionId = $transInfo['transaction_id'];
 
-        /** @var PurchaseRequest|null $purchaseRequest */
         $purchaseRequest = XF::em()->findOne(
-            'XF:PurchaseRequest',
+            PurchaseRequest::class,
             ['provider_metadata' => $transInfo['subscriber_id']]
         );
 
@@ -192,11 +186,10 @@ class Android extends AbstractProvider implements IAPInterface
             }
         }
 
-        if ($purchase->getAcknowledgementState() === 0) {
+        if (!$purchase->isAcknowledged()) {
             try {
                 $this->ackPurchase(
                     $service,
-                    $filtered['packageName'],
                     $filtered['subscriptionNotification']['subscriptionId'],
                     $filtered['subscriptionNotification']['purchaseToken'],
                     [
@@ -234,26 +227,8 @@ class Android extends AbstractProvider implements IAPInterface
 
     protected function isEventSkippable(CallbackState $state): bool
     {
-        $requestKey = $state->requestKey;
-        $purchase = $this->getSubscriptionPurchase($state);
         $dataRaw = $state->{self::KEY_STATE_DATA_RAW} ?? [];
-
-        if ($purchase !== null && $requestKey === null) {
-            $payload = (array) json_decode($purchase->getDeveloperPayload(), true);
-            if (!array_key_exists('request_key', $payload) || $payload['request_key'] === null) {
-                $state->logMessage = 'Invalid purchase request';
-                $lastLog = XF::finder(XF\Finder\PaymentProviderLogFinder::class)
-                    ->where('subscriber_id', $state->subscriberId)
-                    ->where('provider_id', $this->providerId)
-                    ->where('log_type', 'info')
-                    ->where('log_message', $state->logMessage)
-                    ->order('log_date', 'desc')
-                    ->fetchOne();
-                $state->logType = $lastLog === null ? 'info' : '';
-
-                return true;
-            }
-        } elseif (isset($dataRaw['deliveryAttempt']) && $dataRaw['deliveryAttempt'] >= 5) {
+        if (isset($dataRaw['deliveryAttempt']) && $dataRaw['deliveryAttempt'] >= 5) {
             $state->logType = 'info';
             $state->logMessage = 'Too many delivery attempts';
 
@@ -303,7 +278,7 @@ class Android extends AbstractProvider implements IAPInterface
         return parent::validateTransaction($state);
     }
 
-    protected function getSubscriptionPurchase(CallbackState $state): ?AndroidPublisher\SubscriptionPurchase
+    protected function getSubscriptionPurchase(CallbackState $state): ?AndroidSubscription
     {
         return $state->{static::KEY_STATE_ANDROID_PURCHASE};
     }
@@ -325,27 +300,14 @@ class Android extends AbstractProvider implements IAPInterface
         }
     }
 
-    protected function isPurchaseCancelled(AndroidPublisher\SubscriptionPurchase $purchase): bool
+    protected function isPurchaseCancelled(AndroidSubscription $purchase): bool
     {
-        /** @var mixed $cancelReason */
-        $cancelReason = $purchase->getCancelReason();
-
-        // 0-user canceled the subscription
-        // 1-canceled by the system
-        // 2-replaced by new subscription
-        // 3-canceled by developer
-        return $cancelReason !== null && $cancelReason >= 0;
+        return $purchase->getIsCancelled();
     }
 
-    protected function isPurchaseReceived(AndroidPublisher\SubscriptionPurchase $purchase): bool
+    protected function isPurchaseReceived(AndroidSubscription $purchase): bool
     {
-        $state = $purchase->getPaymentState();
-
-        // 0-payment pending
-        // 1-payment received
-        // 2-free trial
-        // 3-pending deferred upgrade/downgrade
-        return $state === 1;
+        return $purchase->getIsValid();
     }
 
     /**
@@ -368,13 +330,9 @@ class Android extends AbstractProvider implements IAPInterface
         $state->logDetails = $logDetails;
     }
 
-    protected function getPurchaseForLogging(AndroidPublisher\SubscriptionPurchase $purchase)
+    protected function getPurchaseForLogging(AndroidSubscription $purchase)
     {
-        if (\is_callable([$purchase, 'toSimpleObject'])) {
-            return $purchase->toSimpleObject();
-        }
-
-        return \get_object_vars($purchase);
+        return $purchase->toArray();
     }
 
     protected function getClient(): \Google\Client
@@ -385,20 +343,16 @@ class Android extends AbstractProvider implements IAPInterface
         return $client;
     }
 
-    public function getAndroidPublisher(PaymentProfile $paymentProfile): AndroidPublisher
+    public function getGooglePlaySubscriptionHelper(PaymentProfile $paymentProfile): GooglePlaySubscription
     {
-        $client = $this->getClient();
         $serviceAccount = \GuzzleHttp\Utils::jsonDecode($paymentProfile->options['service_account_json'], true);
 
-        $client->setAuthConfig($serviceAccount);
-        $client->addScope('https://www.googleapis.com/auth/androidpublisher');
-
-        return new AndroidPublisher($client);
+        return new GooglePlaySubscription($serviceAccount, $paymentProfile->options['app_bundle_id']);
     }
 
-    protected function getIAPTransactionInfo(AndroidPublisher\SubscriptionPurchase $purchase): ?array
+    protected function getIAPTransactionInfo(AndroidSubscription $purchase): ?array
     {
-        $transactionId = $purchase->getOrderId();
+        $transactionId = $purchase->getLatestOrderId();
         if (\strlen($transactionId) === 0) {
             return null;
         }
@@ -432,15 +386,10 @@ class Android extends AbstractProvider implements IAPInterface
 
         $paymentProfile = $purchaseRequest->PaymentProfile;
 
-        $service = $this->getAndroidPublisher($paymentProfile);
-        $purchase = $service->purchases_subscriptions->get(
-            $paymentProfile->options['app_bundle_id'],
-            $payload['subscription_id'],
-            $payload['purchase_token']
-        );
+        $service = $this->getGooglePlaySubscriptionHelper($paymentProfile);
+        $purchase = $service->getSubscription($payload['purchase_token']);
 
-        /** @var \XF\Entity\PaymentProviderLog $paymentLog */
-        $paymentLog = XF::em()->create('XF:PaymentProviderLog');
+        $paymentLog = XF::em()->create(XF\Entity\PaymentProviderLog::class);
         $paymentLog->log_type = 'info';
         $paymentLog->log_message = '[Android] Verify receipt response';
         $paymentLog->log_details = [
@@ -467,8 +416,8 @@ class Android extends AbstractProvider implements IAPInterface
             ]);
 
             // ack
-            if ($purchase->getAcknowledgementState() === 0) {
-                $this->ackPurchase($service, $paymentProfile->options['app_bundle_id'], $payload['subscription_id'], $payload['purchase_token'], [
+            if (!$purchase->isAcknowledged()) {
+                $this->ackPurchase($service, $payload['subscription_id'], $payload['purchase_token'], [
                     'user_id' => $purchaseRequest->user_id,
                     'request_key' => $purchaseRequest->request_key,
                 ]);
@@ -487,31 +436,8 @@ class Android extends AbstractProvider implements IAPInterface
         return $paymentProfile->options['expires_extra_seconds'] ?? 120;
     }
 
-    protected function ackPurchase(AndroidPublisher $publisher, string $packageName, string $subId, string $token, array $devPayload = []): void
+    protected function ackPurchase(GooglePlaySubscription $publisher, string $subId, string $token, array $devPayload = []): void
     {
-        $ackBody = new AndroidPublisher\SubscriptionPurchasesAcknowledgeRequest();
-        $ackBody->setDeveloperPayload(\GuzzleHttp\Utils::jsonEncode($devPayload));
-
-        try {
-            $publisher->purchases_subscriptions->acknowledge(
-                $packageName,
-                $subId,
-                $token,
-                $ackBody
-            );
-        } catch (Throwable $e) {
-            if ($e instanceof \Google_Service_Exception) {
-                $message = (array) json_decode($e->getMessage(), true);
-                if (isset($message['error'], $message['error']['errors'])) {
-                    $reason = $message['error']['errors'][0]['reason'];
-                    if ($reason === 'alreadyAcknowledged') {
-                        // skip
-                        return;
-                    }
-                }
-            }
-
-            throw $e;
-        }
+        $publisher->acknowledgeSubscription($subId, $token, $devPayload);
     }
 }

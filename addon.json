@@ -21,6 +21,5 @@
             "XenForo 2.3.x"
         ]
     },
-    "icon": "",
-    "composer_autoload": "vendor/composer"
+    "icon": ""
 }

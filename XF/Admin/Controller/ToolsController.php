@@ -50,9 +50,7 @@ class ToolsController extends XFCP_ToolsController
 
         return $this->view(
             'Truonglv\Api:Tools\TestPushNotifications',
-            'tapi_test_push_notifications',
-            [
-            ]
+            'tapi_test_push_notifications'
         );
     }
 }

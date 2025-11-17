@@ -171,8 +171,7 @@ class IOS extends AbstractProvider implements IAPInterface
         $state->transactionId = $transactionId;
 
         $storeProductId = $transaction->productId;
-        /** @var IAPProduct|null $iapProduct */
-        $iapProduct = XF::em()->findOne('Truonglv\Api:IAPProduct', [
+        $iapProduct = XF::em()->findOne(IAPProduct::class, [
             'platform' => 'ios',
             'store_product_id' => $storeProductId
         ]);
@@ -234,7 +233,7 @@ class IOS extends AbstractProvider implements IAPInterface
     {
         $loggedProductId = $log->log_details['signedTransaction']['productId'] ?? '';
         if ($loggedProductId === '') {
-            $purchase = (array) json_decode($log->log_details['_POST']['purchase'] ?? '', true);
+            $purchase = (array) \GuzzleHttp\Utils::jsonDecode($log->log_details['_POST']['purchase'] ?? '', true);
             $loggedProductId = $purchase['productId'] ?? '';
         }
 
@@ -415,8 +414,8 @@ class IOS extends AbstractProvider implements IAPInterface
             throw new \Exception('Invalid JWS format');
         }
 
-        $header = json_decode(base64_decode(strtr($parts[0], '-_', '+/')), true);
-        $payload = json_decode(base64_decode(strtr($parts[1], '-_', '+/')), true);
+        $header = \GuzzleHttp\Utils::jsonDecode(base64_decode(strtr($parts[0], '-_', '+/')), true);
+        $payload = \GuzzleHttp\Utils::jsonDecode(base64_decode(strtr($parts[1], '-_', '+/')), true);
 
         if (!isset($header['x5c']) || !is_array($header['x5c'])) {
             throw new \Exception('Missing x5c certificate chain');
@@ -456,8 +455,7 @@ class IOS extends AbstractProvider implements IAPInterface
     {
         $respJson = $this->requestVerifyReceipt($purchaseRequest, $payload);
 
-        /** @var XF\Entity\PaymentProviderLog $paymentLog */
-        $paymentLog = XF::em()->create('XF:PaymentProviderLog');
+        $paymentLog = XF::em()->create(XF\Entity\PaymentProviderLog::class);
         $paymentLog->log_type = 'info';
         $paymentLog->log_message = '[IOS] Verify receipt response';
         $paymentLog->log_details = [
