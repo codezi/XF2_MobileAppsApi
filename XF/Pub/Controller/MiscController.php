@@ -7,9 +7,6 @@ use function md5;
 use Truonglv\Api\App;
 use function is_array;
 use function hash_equals;
-use function json_decode;
-use InvalidArgumentException;
-use Truonglv\Api\Util\Encryption;
 use Truonglv\Api\Entity\AccessToken;
 
 class MiscController extends XFCP_MiscController
@@ -22,27 +19,18 @@ class MiscController extends XFCP_MiscController
             return $this->redirect($this->buildLink('index'));
         }
 
-        /** @var mixed $data */
-        $data = null;
-
-        try {
-            $data = Encryption::decrypt($payload, $this->app()->options()->tApi_encryptKey);
-        } catch (InvalidArgumentException $e) {
-        }
-
-        if ($data === null) {
-            return $this->redirect($this->buildLink('index'));
-        }
-
-        $computeSign = md5($payload);
+        $computeSign = md5($payload . $this->app()->options()->tApi_encryptKey);
         if (!hash_equals($sign, $computeSign)) {
             return $this->redirect($this->buildLink('index'));
         }
 
-        $data = json_decode($data, true);
-        if (!is_array($data)
-            || !isset($data[App::KEY_LINK_PROXY_TARGET_URL])
-        ) {
+        $base64Decoded = \base64_decode($payload, true);
+        if ($base64Decoded === false) {
+            return $this->redirect($this->buildLink('index'));
+        }
+
+        $data = \GuzzleHttp\Utils::jsonDecode($base64Decoded, true);
+        if (!is_array($data)) {
             return $this->redirect($this->buildLink('index'));
         }
 

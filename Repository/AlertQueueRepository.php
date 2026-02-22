@@ -105,7 +105,7 @@ class AlertQueueRepository extends Repository
         switch ($contentType) {
             case 'alert':
                 /** @var UserAlert|null $userAlert */
-                $userAlert = $this->em->find('XF:UserAlert', $contentId);
+                $userAlert = $this->em->find(UserAlert::class, $contentId);
                 if ($userAlert === null || $userAlert->view_date > 0) {
                     return;
                 }
@@ -119,7 +119,7 @@ class AlertQueueRepository extends Repository
                     throw new LogicException('Must be specified `action`');
                 }
                 /** @var ConversationMessage|null $convoMessage */
-                $convoMessage = $this->em->find('XF:ConversationMessage', $contentId);
+                $convoMessage = $this->em->find(ConversationMessage::class, $contentId);
                 if ($convoMessage !== null) {
                     $service = $this->getPushNotificationService();
                     $service->sendConversationNotification($convoMessage, $data['action']);
@@ -151,9 +151,9 @@ class AlertQueueRepository extends Repository
         $contents = [];
         foreach ($contentMap as $contentType => $contentIds) {
             if ($contentType === 'alert') {
-                $contents[$contentType] = $this->em->findByIds('XF:UserAlert', $contentIds, 'Receiver');
+                $contents[$contentType] = $this->em->findByIds(UserAlert::class, $contentIds, 'Receiver');
             } elseif ($contentType === 'conversation_message') {
-                $contents[$contentType] = $this->em->findByIds('XF:ConversationMessage', $contentIds);
+                $contents[$contentType] = $this->em->findByIds(ConversationMessage::class, $contentIds);
             }
         }
 

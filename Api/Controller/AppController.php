@@ -244,12 +244,6 @@ class AppController extends AbstractController
         }
 
         $password = $this->filter('password', 'str');
-        $decrypted = '';
-
-        try {
-            $decrypted = Encryption::decrypt($password, $this->options()->tApi_encryptKey);
-        } catch (InvalidArgumentException $e) {
-        }
 
         $input = $this->filter([
             'username' => 'str',
@@ -258,7 +252,7 @@ class AppController extends AbstractController
 
         $registration = $this->service(XF\Service\User\RegistrationService::class);
         $registration->setFromInput($input);
-        $registration->setPassword($decrypted, '', false);
+        $registration->setPassword($password, '', false);
 
         if ($this->request()->exists('birthday')) {
             /** @var DateTime|null $birthday */
@@ -293,8 +287,7 @@ class AppController extends AbstractController
             return $this->noPermission();
         }
 
-        $encrypted = $this->filter('password', 'str');
-        $password = $this->decryptPassword($encrypted);
+        $password = $this->filter('password', 'str');
 
         $username = $this->filter('username', 'str');
         $user = $this->verifyUserCredentials($username, $password);
@@ -361,10 +354,6 @@ class AppController extends AbstractController
             'email' => 'str',
             'password' => 'str',
         ]);
-
-        if (strlen($input['password']) > 0) {
-            $input['password'] = $this->decryptPassword($input['password']);
-        }
 
         $connectedAccountRepo = $this->repository(XF\Repository\ConnectedAccountRepository::class);
         $tokenText = $this->filter('token', 'str');
@@ -585,27 +574,6 @@ class AppController extends AbstractController
             'message' => XF::phrase('tapi_your_account_has_been_upgraded'),
             'request_key' => $purchaseRequest->request_key,
         ]);
-    }
-
-    protected function decryptPassword(string $encryptedPassword): string
-    {
-        if ($this->request()->exists('password_algo')) {
-            $algo = $this->filter('password_algo', 'str');
-        } else {
-            $algo = Encryption::ALGO_AES_256_CBC;
-        }
-
-        if (Encryption::isSupportedAlgo($algo)) {
-            try {
-                $password = Encryption::decrypt($encryptedPassword, $this->options()->tApi_encryptKey, $algo);
-            } catch (Throwable $e) {
-                throw $this->exception($this->error(XF::phrase('incorrect_password')));
-            }
-        } else {
-            $password = $encryptedPassword;
-        }
-
-        return $password;
     }
 
     protected function createExternalAccount(

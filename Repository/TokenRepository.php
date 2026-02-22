@@ -2,6 +2,8 @@
 
 namespace Truonglv\Api\Repository;
 
+use Truonglv\Api\Entity\AccessToken;
+use Truonglv\Api\Entity\RefreshToken;
 use XF;
 use function md5;
 use function time;
@@ -38,7 +40,7 @@ class TokenRepository extends Repository
         }
 
         return $this->createToken(
-            'Truonglv\Api:AccessToken',
+            AccessToken::class,
             $userId,
             $seconds,
             $limit
@@ -48,7 +50,7 @@ class TokenRepository extends Repository
     public function createRefreshToken(int $userId, int $seconds, int $limit = 5): string
     {
         return $this->createToken(
-            'Truonglv\Api:RefreshToken',
+            RefreshToken::class,
             $userId,
             $seconds,
             $limit
